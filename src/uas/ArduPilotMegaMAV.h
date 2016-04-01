@@ -501,6 +501,7 @@ enum Mode
     QSTABILIZE    = 17,
     QHOVER        = 18,
     QLOITER       = 19,
+    EIGHT_PLANE   = 21,
     LAST_MODE           // This must always be the last entry
 };
 

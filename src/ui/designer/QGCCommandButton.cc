@@ -57,6 +57,7 @@ QGCCommandButton::QGCCommandButton(QWidget *parent) :
     ui->editCommandComboBox->addItem("CUSTOM 15", 15);
     ui->editCommandComboBox->addItem("NAV_WAYPOINT", MAV_CMD_NAV_WAYPOINT);
     ui->editCommandComboBox->addItem("MAV_CMD_NAV_LOITER_UNLIM", MAV_CMD_NAV_LOITER_UNLIM);
+    ui->editCommandComboBox->addItem("MAV_CMD_NAV_EIGHT_PLANE", MAV_CMD_NAV_EIGHT_PLANE);
     ui->editCommandComboBox->addItem("MAV_CMD_NAV_LOITER_TURNS", MAV_CMD_NAV_LOITER_TURNS);
     ui->editCommandComboBox->addItem("MAV_CMD_NAV_LOITER_TIME", MAV_CMD_NAV_LOITER_TIME);
     ui->editCommandComboBox->addItem("MAV_CMD_NAV_LOITER_TO_ALT", MAV_CMD_NAV_LOITER_TO_ALT);
