@@ -53,8 +53,9 @@ AP2DataPlotThread::AP2DataPlotThread(AP2DataPlot2DModel *model,QObject *parent) 
     qRegisterMetaType<MAV_TYPE>("MAV_TYPE");
     qRegisterMetaType<AP2DataPlotStatus>("AP2DataPlotStatus");
 
-    m_possibleTimestamps.push_back(tsNameToScalingType("TimeUS", 1000000.0));
-    m_possibleTimestamps.push_back(tsNameToScalingType("TimeMS", 1000.0));
+    // flash logs and exported logs can have different timestamps
+    m_possibleTimestamps.push_back(timeStampType("TimeUS", 1000000.0));
+    m_possibleTimestamps.push_back(timeStampType("TimeMS", 1000.0));
 }
 
 AP2DataPlotThread::~AP2DataPlotThread()
@@ -87,7 +88,6 @@ void AP2DataPlotThread::loadBinaryLog(QFile &logfile)
     int index = 0;
     quint64 lastValidTS = 0;
     m_loadedLogType = MAV_TYPE_GENERIC;
-    tsNameToScalingType timeStampSearchKey;
 
     if (!m_dataModel->startTransaction())
     {
@@ -127,7 +127,7 @@ void AP2DataPlotThread::loadBinaryLog(QFile &logfile)
                         desc.m_length = static_cast<int>(static_cast<unsigned>(packet.at(1)));    //Message length
                         desc.m_name   = packet.mid(2,4);    //Name of the message
                         desc.m_format = packet.mid(6,16);   //Format of the variables
-                        desc.m_labels = packet.mid(22,64); //comma delimited list of variable names.
+                        desc.m_labels = packet.mid(22,64);  //comma delimited list of variable names.
                         typeToDescriptorMap.insert(msg_type, desc); // store descriptor for parsing
 
                         if (desc.m_name == "PARM")
@@ -156,30 +156,30 @@ void AP2DataPlotThread::loadBinaryLog(QFile &logfile)
                         if (!tables.contains(desc.m_name))
                         {
                             // try to find the name of timestamp column
-                            if (timeStampSearchKey.first.size() == 0)
+                            if (m_timeStamp.m_name.size() == 0)
                             {
-                                foreach(const tsNameToScalingType &tsName, m_possibleTimestamps)
+                                foreach(const timeStampType &ts, m_possibleTimestamps)
                                 {
-                                    if (desc.m_labels.contains(tsName.first))
+                                    if (desc.m_labels.contains(ts.m_name))
                                     {
                                         // found
-                                        timeStampSearchKey = tsName;
+                                        m_timeStamp = ts;
                                         break;
                                     }
                                 }
                                 // check again and if not found store descriptor for delayed transfer to data model
                                 // as we haven't detected the right name
-                                if(timeStampSearchKey.first.size() == 0)
+                                if(m_timeStamp.m_name.size() == 0)
                                 {
                                     typesWithoutTimeStamp.push_back(typeToDescPair(msg_type, desc));
                                 }
                             }
-                            if (timeStampSearchKey.first.size() != 0)
+                            if (m_timeStamp.m_name.size() != 0)
                             {   // we have a valid timestamp column name
                                 // first check if we have to process delayed messages without a timestamp
                                 foreach (typeToDescPair typeDescPair, typesWithoutTimeStamp)
                                 {
-                                    addTimeToDescriptor(timeStampSearchKey, typeDescPair.second);
+                                    addTimeToDescriptor(typeDescPair.second);
                                     // store message type for later processing
                                     timeStampHasToBeAdded.push_back(typeDescPair.first);
                                     // store adapted message
@@ -198,10 +198,10 @@ void AP2DataPlotThread::loadBinaryLog(QFile &logfile)
                                 typesWithoutTimeStamp.clear();
 
                                 // Now check if the actual message conains a timestamp if not add it
-                                if (!desc.m_labels.contains(timeStampSearchKey.first))
+                                if (!desc.m_labels.contains(m_timeStamp.m_name))
                                 {
                                     // Add timestamp to descriptor
-                                    addTimeToDescriptor(timeStampSearchKey, desc);
+                                    addTimeToDescriptor(desc);
                                     timeStampHasToBeAdded.push_back(msg_type);// store message type for later processing
                                 }
                                 // Special handling for "GPS" messages that have a "TimeMS" timestamp but scaling
@@ -209,7 +209,7 @@ void AP2DataPlotThread::loadBinaryLog(QFile &logfile)
                                 if ((desc.m_name == "GPS") && desc.m_labels.contains("TimeMS"))
                                 {
                                     // replace the original timestamp name
-                                    adaptGPSDescriptor(typeToDescriptorMap, desc, timeStampSearchKey, msg_type);
+                                    adaptGPSDescriptor(typeToDescriptorMap, desc, msg_type);
                                     timeStampHasToBeAdded.push_back(msg_type);// store message type for later processing
                                 }
 
@@ -410,29 +410,11 @@ void AP2DataPlotThread::loadBinaryLog(QFile &logfile)
                                 }
                             }
                             // check if a synthetic timestamp has to added
-                            if (timeStampHasToBeAdded.size() > 0)
-                            {
-                                if (timeStampHasToBeAdded.contains(type))
-                                {
-                                    valuepairlist.prepend(QPair<QString, QVariant>(timeStampSearchKey.first, ++lastValidTS));
-                                }
-                                // if not store actual time stamp
-                                else
-                                {
-                                    typedef QPair<QString, QVariant> valuePairType;
-                                    foreach (const valuePairType &valuePair, valuepairlist)
-                                    {
-                                        if (valuePair.first == timeStampSearchKey.first)
-                                        {
-                                            lastValidTS = static_cast<quint64>(valuePair.second.toLongLong());
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
+                            handleMissingTimeStamps(timeStampHasToBeAdded, type, valuepairlist, lastValidTS, index);
+
                             if (noCorruptDataFound && (valuepairlist.size() >= 1))
                             {
-                                if (!m_dataModel->addRow(name, valuepairlist, index, timeStampSearchKey.first))
+                                if (!m_dataModel->addRow(name, valuepairlist, index, m_timeStamp.m_name))
                                 {
                                     QString actualerror = m_dataModel->getError();
                                     m_dataModel->endTransaction(); //endTransaction can re-set the error if it errors, but we should try it anyway.
@@ -494,14 +476,13 @@ void AP2DataPlotThread::loadBinaryLog(QFile &logfile)
         emit error(m_dataModel->getError());
         return;
     }
-    m_dataModel->setAllRowsHaveTime(true, timeStampSearchKey.first, timeStampSearchKey.second);
+    m_dataModel->setAllRowsHaveTime(true, m_timeStamp.m_name, m_timeStamp.m_divisor);
 }
 
 void AP2DataPlotThread::loadAsciiLog(QFile &logfile)
 {
     m_loadedLogType = MAV_TYPE_GENERIC;
     int index = 500;
-    tsNameToScalingType timeStampSearchKey;
 
     typedef QPair<unsigned int, typeDescriptor> typeToDescPair; // Pair holding message type and format descriptor
     QMap<QString, typeDescriptor> nameToDescriptorMap;     // Map to get a format descriptor for every message type
@@ -565,30 +546,30 @@ void AP2DataPlotThread::loadAsciiLog(QFile &logfile)
                         nameToDescriptorMap.insert(desc.m_name, desc);  // Update descriptor
 
                         // Check for rows having a timestamp
-                        if (timeStampSearchKey.first.size() == 0)
+                        if (m_timeStamp.m_name.size() == 0)
                         {
-                            foreach(const tsNameToScalingType &tsName, m_possibleTimestamps)
+                            foreach(const timeStampType &ts, m_possibleTimestamps)
                             {
-                                if (desc.m_labels.contains(tsName.first))
+                                if (desc.m_labels.contains(ts.m_name))
                                 {
                                     // found
-                                    timeStampSearchKey = tsName;
+                                    m_timeStamp = ts;
                                     break;
                                 }
                             }
                             // check again and if not found store descriptor for delayed transfer to data model
                             // as we haven't detected the right name
-                            if(timeStampSearchKey.first.size() == 0)
+                            if(m_timeStamp.m_name.size() == 0)
                             {
                                 typesWithoutTimeStamp.push_back(typeToDescPair(type_id, desc));
                             }
                         }
-                        if (timeStampSearchKey.first.size() != 0)
+                        if (m_timeStamp.m_name.size() != 0)
                         {   // we have a valid timestamp column name
                             // first check if we have to process delayed messages without a timestamp
                             foreach (typeToDescPair typeDescPair, typesWithoutTimeStamp)
                             {
-                                addTimeToDescriptor(timeStampSearchKey, typeDescPair.second);
+                                addTimeToDescriptor(typeDescPair.second);
                                 // store message type for later processing
                                 timeStampHasToBeAdded.push_back(typeDescPair.second.m_name);
                                 // store adapted message
@@ -606,10 +587,10 @@ void AP2DataPlotThread::loadAsciiLog(QFile &logfile)
                             typesWithoutTimeStamp.clear();
 
                             // Now check if the actual message conains a timestamp if not add it
-                            if (!desc.m_labels.contains(timeStampSearchKey.first))
+                            if (!desc.m_labels.contains(m_timeStamp.m_name))
                             {
                                 // Add timestamp to descriptor
-                                addTimeToDescriptor(timeStampSearchKey, desc);
+                                addTimeToDescriptor(desc);
                                 timeStampHasToBeAdded.push_back(desc.m_name);// store message type for later processing
                             }
                             // Special handling for "GPS" messages that have a "TimeMS" timestamp but scaling
@@ -617,7 +598,7 @@ void AP2DataPlotThread::loadAsciiLog(QFile &logfile)
                             if ((desc.m_name == "GPS") && desc.m_labels.contains("TimeMS"))
                             {
                                 // replace the original timestamp name only if not already done
-                                if (adaptGPSDescriptor(nameToDescriptorMap, desc, timeStampSearchKey))
+                                if (adaptGPSDescriptor(nameToDescriptorMap, desc))
                                 {
                                     timeStampHasToBeAdded.push_back(desc.m_name);// store message type for later processing
                                 }
@@ -766,29 +747,11 @@ void AP2DataPlotThread::loadAsciiLog(QFile &logfile)
                             if (!foundError)
                             {
                                 // check if a synthetic timestamp has to added
-                                if (timeStampHasToBeAdded.size() > 0)
-                                {
-                                    if (timeStampHasToBeAdded.contains(name))
-                                    {
-                                        valuepairlist.prepend(QPair<QString, QVariant>(timeStampSearchKey.first, ++lastValidTS));
-                                    }
-                                    // if not store actual time stamp
-                                    else
-                                    {
-                                        typedef QPair<QString, QVariant> valuePairType;
-                                        foreach (const valuePairType &valuePair, valuepairlist)
-                                        {
-                                            if (valuePair.first == timeStampSearchKey.first)
-                                            {
-                                                lastValidTS = static_cast<quint64>(valuePair.second.toLongLong());
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
+                                handleMissingTimeStamps(timeStampHasToBeAdded, name, valuepairlist, lastValidTS, index);
+
                                 if (valuepairlist.size() >= 1)
                                 {
-                                    if (!m_dataModel->addRow(name,valuepairlist,index++, timeStampSearchKey.first))
+                                    if (!m_dataModel->addRow(name,valuepairlist,index++, m_timeStamp.m_name))
                                     {
                                         QString actualerror = m_dataModel->getError();
                                         m_dataModel->endTransaction(); //endTransaction can re-set the error if it errors, but we should try it anyway.
@@ -815,8 +778,9 @@ void AP2DataPlotThread::loadAsciiLog(QFile &logfile)
         emit error(m_dataModel->getError());
         return;
     }
-    m_dataModel->setAllRowsHaveTime(true, timeStampSearchKey.first , timeStampSearchKey.second);
+    m_dataModel->setAllRowsHaveTime(true, m_timeStamp.m_name , m_timeStamp.m_divisor);
 }
+
 
 void AP2DataPlotThread::loadTLog(QFile &logfile)
 {
@@ -825,9 +789,9 @@ void AP2DataPlotThread::loadTLog(QFile &logfile)
     int bytesize = 0;
     int index = 100;
     quint8 lastModeVal = 255;
-    QList<QString> timeStampHasToBeAdded;
+    QStringList timeStampHasToBeAdded;
     quint64 lastValidTS = 0;
-    tsNameToScalingType timeStampSearchKey("time_boot_ms", 1000.0);
+    m_timeStamp = timeStampType("time_boot_ms", 1000.0); // tlogs only have one possible time stamp
 
     mavlink_message_t message;
     mavlink_status_t status;
@@ -842,11 +806,25 @@ void AP2DataPlotThread::loadTLog(QFile &logfile)
     // Tlog does not contain MODE messages the mode information ins transmitted in
     // a heartbeat message. So we create the datatype for MODE here and put it into data model
     QStringList modeVarNames;
-    modeVarNames.push_back(QString(timeStampSearchKey.first));
+    modeVarNames.push_back(QString(m_timeStamp.m_name));
     modeVarNames.push_back(QString("Mode"));
     modeVarNames.push_back(QString("ModeNum"));
     modeVarNames.push_back(QString("Info"));
     if (!m_dataModel->addType(ModeMessage::TypeName,0,0,"QMBZ",modeVarNames))
+    {
+        QString actualerror = m_dataModel->getError();
+        m_dataModel->endTransaction(); //endTransaction can re-set the error if it errors, but we should try it anyway.
+        emit error(actualerror);
+        return;
+    }
+
+    // Tlog does not contain MSG messages. The information is gathered from STATUSTEXT tlog
+    // messages. So we create the datatype for MSG here and put it into data model.
+    QStringList msgVarNames;
+    msgVarNames.push_back(QString(m_timeStamp.m_name));
+    msgVarNames.push_back(QString("Message"));
+    msgVarNames.push_back(QString("Info"));
+    if (!m_dataModel->addType(MsgMessage::TypeName,0,0,"QZZ",msgVarNames))
     {
         QString actualerror = m_dataModel->getError();
         m_dataModel->endTransaction(); //endTransaction can re-set the error if it errors, but we should try it anyway.
@@ -887,7 +865,14 @@ void AP2DataPlotThread::loadTLog(QFile &logfile)
                                 {
                                     case MAVLINK_TYPE_CHAR:
                                     {
-                                        desc.m_format += "b";
+                                        if (fieldinfo.array_length == 0)
+                                        {
+                                            desc.m_format += "b";   // it is a single byte
+                                        }
+                                        else
+                                        {
+                                            desc.m_format += "Z";   // everything else is a string
+                                        }
                                     }
                                     break;
                                     case MAVLINK_TYPE_UINT8_T:
@@ -946,12 +931,12 @@ void AP2DataPlotThread::loadTLog(QFile &logfile)
                             desc.m_labels = variablenames.join(",");    // complete descriptor
 
                             // Handle time stamps
-                            if (timeStampSearchKey.first.size() != 0)
+                            if (m_timeStamp.m_name.size() != 0)
                             {
                                 // Now check if the actual message conains a timestamp if not add it
-                                if (!desc.m_labels.contains(timeStampSearchKey.first))
+                                if (!desc.m_labels.contains(m_timeStamp.m_name))
                                 {
-                                    addTimeToDescriptor(timeStampSearchKey, desc);
+                                    addTimeToDescriptor(desc);
                                     // store message type for later processing
                                     timeStampHasToBeAdded.push_back(desc.m_name);
                                 }
@@ -985,83 +970,69 @@ void AP2DataPlotThread::loadTLog(QFile &logfile)
                         if (valuepairlist.size() >= 1)
                         {
                             // check if a synthetic timestamp has to added
-                            if (timeStampHasToBeAdded.size() > 0)
-                            {
-                                if (timeStampHasToBeAdded.contains(desc.m_name))
-                                {
-                                    valuepairlist.prepend(QPair<QString, QVariant>(timeStampSearchKey.first, lastValidTS));
-                                }
-                                // if not store actual time stamp
-                                else
-                                {
-                                    QList<QPair<QString,QVariant> >::Iterator iter;
-                                    for (iter = valuepairlist.begin(); iter != valuepairlist.end(); ++iter)
-                                    {
-                                        if (iter->first == timeStampSearchKey.first)
-                                        {
-                                            quint64 tempVal = static_cast<quint64>(iter->second.toULongLong());
-                                            // check if time is increasing
-                                            if (tempVal >= lastValidTS)
-                                            {
-                                                lastValidTS = tempVal;
-                                            }
-                                            else
-                                            {
-                                                QLOG_ERROR() << "Corrupt data read: Time is not increasing! Last valid time stamp:"
-                                                             << QString::number(lastValidTS) << " actual read time stamp is:"
-                                                             << QString::number(tempVal);
-                                                m_plotState.corruptDataRead(index, "Log time is not increasing! Last Time:" +
-                                                                            QString::number(lastValidTS) + " new Time:" +
-                                                                            QString::number(tempVal));
-                                                // if not increasing set to last valid value
-                                                iter->second = lastValidTS;
-                                            }
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            // Time handling done - store the data in model
-                            if (!m_dataModel->addRow(desc.m_name,valuepairlist, index++, timeStampSearchKey.first))
+                            handleMissingTimeStamps(timeStampHasToBeAdded, desc.m_name, valuepairlist, lastValidTS, index);
+
+                            if (!m_dataModel->addRow(desc.m_name,valuepairlist, index++, m_timeStamp.m_name))
                             {
                                 QString actualerror = m_dataModel->getError();
                                 m_dataModel->endTransaction(); //endTransaction can re-set the error if it errors, but we should try it anyway.
                                 emit error(actualerror);
                                 return;
                             }
+
                             // Tlog does not contain MODE messages the mode information ins transmitted in
                             // a heartbeat message. So here we extract MODE data from hertbeat
-                            if ((desc.m_name == "HEARTBEAT") && (lastModeVal != static_cast<quint8>(valuepairlist[1].second.toInt())))
+                            if ((message.msgid == MAVLINK_MSG_ID_HEARTBEAT) && (valuepairlist.size() > 1))
                             {
-                                QList<QPair<QString,QVariant> > specialValuepairlist;
-                                // Extract MODE messages from heratbeat messages
-                                lastModeVal = static_cast<quint8>(valuepairlist[1].second.toInt());
+                                // Only if mode val has canged
+                                if (lastModeVal != static_cast<quint8>(valuepairlist[1].second.toInt()))
+                                {
+                                    QList<QPair<QString,QVariant> > specialValuepairlist;
+                                    // Extract MODE messages from heratbeat messages
+                                    lastModeVal = static_cast<quint8>(valuepairlist[1].second.toInt());
 
-                                specialValuepairlist.append(QPair<QString, QVariant>(modeVarNames[0], lastValidTS));
-                                specialValuepairlist.append(QPair<QString, QVariant>(modeVarNames[1], lastModeVal));
-                                specialValuepairlist.append(QPair<QString, QVariant>(modeVarNames[2], lastModeVal));
-                                specialValuepairlist.append(QPair<QString, QVariant>(modeVarNames[3], "Generated Value"));
-                                if (!m_dataModel->addRow(ModeMessage::TypeName, specialValuepairlist, index++, timeStampSearchKey.first))
+                                    specialValuepairlist.append(QPair<QString, QVariant>(modeVarNames[0], lastValidTS));
+                                    specialValuepairlist.append(QPair<QString, QVariant>(modeVarNames[1], lastModeVal));
+                                    specialValuepairlist.append(QPair<QString, QVariant>(modeVarNames[2], lastModeVal));
+                                    specialValuepairlist.append(QPair<QString, QVariant>(modeVarNames[3], "Generated Value"));
+                                    if (!m_dataModel->addRow(ModeMessage::TypeName, specialValuepairlist, index++, m_timeStamp.m_name))
+                                    {
+                                        QString actualerror = m_dataModel->getError();
+                                        m_dataModel->endTransaction(); //endTransaction can re-set the error if it errors, but we should try it anyway.
+                                        emit error(actualerror);
+                                        return;
+                                    }
+
+                                    // Mav type can be extracted from heartbeat too. So lets set the Mav type
+                                    // if not already set
+                                    if (m_loadedLogType == MAV_TYPE_GENERIC)
+                                    {
+                                        // Name field is not always on same Index. So first search for the right position...
+                                        for (int i = 0; i < valuepairlist.size(); ++i)
+                                        {
+                                            if (valuepairlist[i].first == "type")   // "type" field holds MAV_TYPE
+                                            {
+                                                m_loadedLogType = static_cast<MAV_TYPE>(valuepairlist[i].second.toInt());
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if((message.msgid == MAVLINK_MSG_ID_STATUSTEXT) && (valuepairlist.size() > 2))
+                            {
+                                // Create a MsgMessage from STATUSTEXT
+                                QList<QPair<QString,QVariant> > specialValuepairlist;
+                                specialValuepairlist.append(QPair<QString, QVariant>(msgVarNames[0], lastValidTS));
+                                specialValuepairlist.append(QPair<QString, QVariant>(msgVarNames[1], valuepairlist[2].second));
+                                specialValuepairlist.append(QPair<QString, QVariant>(msgVarNames[2], "Generated Value"));
+                                if (!m_dataModel->addRow(MsgMessage::TypeName, specialValuepairlist, index++, m_timeStamp.m_name))
                                 {
                                     QString actualerror = m_dataModel->getError();
                                     m_dataModel->endTransaction(); //endTransaction can re-set the error if it errors, but we should try it anyway.
                                     emit error(actualerror);
                                     return;
-                                }
-
-                                // Mav type can be extracted from heartbeat too. So lets set the Mav type
-                                // if not already set
-                                if (m_loadedLogType == MAV_TYPE_GENERIC)
-                                {
-                                    // Name field is not always on same Index. So first search for the right position...
-                                    for (int i = 0; i < valuepairlist.size(); ++i)
-                                    {
-                                        if (valuepairlist[i].first == "type")   // "type" field holds MAV_TYPE
-                                        {
-                                            m_loadedLogType = static_cast<MAV_TYPE>(valuepairlist[i].second.toInt());
-                                            break;
-                                        }
-                                    }
                                 }
                             }
                             m_plotState.validDataRead();    // tell plot state that we have a valid message
@@ -1088,7 +1059,7 @@ void AP2DataPlotThread::loadTLog(QFile &logfile)
         emit error(m_dataModel->getError());
         return;
     }
-    m_dataModel->setAllRowsHaveTime(true, timeStampSearchKey.first, timeStampSearchKey.second);
+    m_dataModel->setAllRowsHaveTime(true, m_timeStamp.m_name, m_timeStamp.m_divisor);
 }
 
 void AP2DataPlotThread::run()
@@ -1141,17 +1112,17 @@ void AP2DataPlotThread::run()
     }
 }
 
-void AP2DataPlotThread::addTimeToDescriptor(const tsNameToScalingType &timeStampSearchKey, typeDescriptor &desc)
+void AP2DataPlotThread::addTimeToDescriptor(typeDescriptor &desc)
 {
     // Add name of the timestamp column adding a "," only if needed
-    desc.m_labels = desc.m_labels.size() != 0 ? timeStampSearchKey.first + ',' + desc.m_labels : timeStampSearchKey.first;
+    desc.m_labels = desc.m_labels.size() != 0 ? m_timeStamp.m_name + ',' + desc.m_labels : m_timeStamp.m_name;
     // Add timestamp format code to format string
     desc.m_format.prepend('Q');
     // and increase the length by 8 bytes ('Q' is a quint_64)
     desc.m_length += 8;
 }
 
-void AP2DataPlotThread::adaptGPSDescriptor(QMap<unsigned int, typeDescriptor> &typeToDescriptorMap, typeDescriptor &desc, const tsNameToScalingType &timeStampSearchKey, const unsigned char msg_type)
+void AP2DataPlotThread::adaptGPSDescriptor(QMap<unsigned int, typeDescriptor> &typeToDescriptorMap, typeDescriptor &desc, const unsigned char msg_type)
 {
     QStringList labels = desc.m_labels.split(",");
     for (QStringList::Iterator iter = labels.begin(); iter != labels.end(); ++iter)
@@ -1166,13 +1137,13 @@ void AP2DataPlotThread::adaptGPSDescriptor(QMap<unsigned int, typeDescriptor> &t
     // parser to use the new time stamp name.
     typeToDescriptorMap.find(msg_type)->m_labels = labels.join(",");
     // add default time stamp name
-    labels.prepend(timeStampSearchKey.first);
+    labels.prepend(m_timeStamp.m_name);
     desc.m_labels = labels.join(",");
     desc.m_format.prepend("Q");     // Add timestamp format code to format string
     desc.m_length += 8;
 }
 
-bool AP2DataPlotThread::adaptGPSDescriptor(QMap<QString, typeDescriptor> &nameToDescriptorMap, typeDescriptor &desc, const tsNameToScalingType &timeStampSearchKey)
+bool AP2DataPlotThread::adaptGPSDescriptor(QMap<QString, typeDescriptor> &nameToDescriptorMap, typeDescriptor &desc)
 {
     if (desc.m_labels.contains("GPSTimeMS"))
     {
@@ -1193,44 +1164,167 @@ bool AP2DataPlotThread::adaptGPSDescriptor(QMap<QString, typeDescriptor> &nameTo
     // parser to use the new time stamp name.
     nameToDescriptorMap.find(desc.m_name)->m_labels = labels.join(",");
     // add default time stamp name
-    labels.prepend(timeStampSearchKey.first);
+    labels.prepend(m_timeStamp.m_name);
     desc.m_labels = labels.join(",");
     desc.m_format.prepend("Q");     // Add timestamp format code to format string
     desc.m_length += 8;
     return true;
 }
 
+void AP2DataPlotThread::handleMissingTimeStamps(const QStringList &timeStampHasToBeAdded, const QString &name,
+                                                QList<QPair<QString,QVariant> > &valuepairlist,
+                                                quint64 &lastValidTS, const int index)
+{
+    if (timeStampHasToBeAdded.size() > 0)
+    {
+        if (timeStampHasToBeAdded.contains(name))
+        {
+            valuepairlist.prepend(QPair<QString, QVariant>(m_timeStamp.m_name, lastValidTS));
+        }
+        // if not store actual time stamp
+        else
+        {
+            getTimeStamp(valuepairlist, index, lastValidTS);
+        }
+    }
+}
+
+void AP2DataPlotThread::handleMissingTimeStamps(const QList<unsigned int> &timeStampHasToBeAdded, const unsigned char type,
+                                                QList<QPair<QString,QVariant> > &valuepairlist,
+                                                quint64 &lastValidTS, const int index)
+{
+    if (timeStampHasToBeAdded.size() > 0)
+    {
+        if (timeStampHasToBeAdded.contains(type))
+        {
+            valuepairlist.prepend(QPair<QString, QVariant>(m_timeStamp.m_name, lastValidTS));
+        }
+        // if not store actual time stamp
+        else
+        {
+            getTimeStamp(valuepairlist, index, lastValidTS);
+        }
+    }
+}
+
+void AP2DataPlotThread::getTimeStamp(QList<QPair<QString,QVariant> > &valuepairlist, const int index, quint64 &lastValidTS)
+{
+    // find value pair with time stamp name
+    QList<QPair<QString,QVariant> >::Iterator iter;
+    for (iter = valuepairlist.begin(); iter != valuepairlist.end(); ++iter)
+    {
+        if (iter->first == m_timeStamp.m_name)
+        {   // found!
+            quint64 tempVal = static_cast<quint64>(iter->second.toULongLong());
+            // check if time is increasing
+            if (tempVal >= lastValidTS)
+            {
+                lastValidTS = tempVal;
+            }
+            else
+            {
+                QLOG_ERROR() << "Corrupt data read: Time is not increasing! Last valid time stamp:"
+                             << QString::number(lastValidTS) << " actual read time stamp is:"
+                             << QString::number(tempVal);
+                m_plotState.corruptTimeRead(index, "Log time is not increasing! Last Time:" +
+                                            QString::number(lastValidTS) + " new Time:" +
+                                            QString::number(tempVal));
+                // if not increasing set to last valid value
+                iter->second = lastValidTS;
+            }
+            break;
+        }
+    }
+}
+
 //*************
 
-AP2DataPlotStatus::AP2DataPlotStatus() : m_parsingState(OK)
+AP2DataPlotStatus::AP2DataPlotStatus() : m_lastParsingState(OK), m_globalState(OK)
 {
 }
 
 void AP2DataPlotStatus::corruptDataRead(const int index, const QString &errorMessage)
 {
-    m_parsingState = TruncationError;
-    m_errors.push_back(errorEntry(index, errorMessage));
+    // When here we just know that we have an error but not if it is at the end
+    // or in the middle of the logfile. So we set truncation error. Data error will
+    // be set as soon as valid data is read again.
+    m_globalState = m_globalState == OK ? TruncationError : m_globalState;
+    m_lastParsingState = DataError;
+    errorEntry entry(m_lastParsingState, index, errorMessage);
+    m_errors.push_back(entry);
 }
 
 void AP2DataPlotStatus::corruptFMTRead(const int index, const QString &errorMessage)
 {
-    m_parsingState = FmtError;
-    m_errors.push_back(errorEntry(index, errorMessage));
+    m_globalState = m_globalState == OK ? FmtError : m_globalState;
+    m_lastParsingState = FmtError;
+    errorEntry entry(m_lastParsingState, index, errorMessage);
+    m_errors.push_back(entry);
 }
 
-AP2DataPlotStatus::parsingState AP2DataPlotStatus::getParsingState()
+void AP2DataPlotStatus::corruptTimeRead(const int index, const QString &errorMessage)
 {
-    return m_parsingState;
+    m_globalState = m_globalState == OK ? TimeError : m_globalState;
+    m_lastParsingState = TimeError;
+    errorEntry entry(m_lastParsingState, index, errorMessage);
+    m_errors.push_back(entry);
 }
 
-QString AP2DataPlotStatus::getErrorText()
+AP2DataPlotStatus::parsingState AP2DataPlotStatus::getParsingState() const
+{
+    return m_globalState;
+}
+
+
+QString AP2DataPlotStatus::getErrorOverview() const
+{
+    int timeErrorCount = 0;
+    int dataErrorCount = 0;
+    int fmtErrorCount  = 0;
+    int unknownErrorCount = 0;
+    QString out;
+    QTextStream outStream(&out);
+
+    foreach (const errorEntry &entry, m_errors)
+    {
+        switch (entry.m_state)
+        {
+        case OK:
+            break;
+        case FmtError:
+            fmtErrorCount++;
+            break;
+        case TimeError:
+            timeErrorCount++;
+            break;
+        case DataError:
+            dataErrorCount++;
+            break;
+        default:
+            unknownErrorCount++;
+            break;
+        }
+    }
+
+    if (fmtErrorCount     > 0) outStream << fmtErrorCount << " format corruptions" << endl;
+    if (timeErrorCount    > 0) outStream << timeErrorCount << " time corruptions" << endl;
+    if (dataErrorCount    > 0) outStream << dataErrorCount << " data corruptions" << endl;
+    if (unknownErrorCount > 0) outStream << unknownErrorCount << " unspecific corruptions" << endl;
+
+    return out;
+}
+
+QString AP2DataPlotStatus::getDetailedErrorText() const
 {
     QString out;
     QTextStream outStream(&out);
 
     foreach (const errorEntry &entry, m_errors)
     {
-        outStream << "Logline " << entry.first << ": " << entry.second << endl;
+        if (entry.m_state != OK)    // Only if a error
+        {
+            outStream << "Logline " << entry.m_index << ": " << entry.m_errortext << endl;
+        }
     }
     outStream << endl << " There were " << m_errors.size() << " errors during log parsing." << endl;
     return out;

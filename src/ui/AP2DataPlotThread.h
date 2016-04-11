@@ -56,6 +56,7 @@ public:
         OK,                 /// Perfect result
         FmtError,           /// Corrupt Format description.
         TruncationError,    /// The log was truncated due to errors @ the end
+        TimeError,          /// The log contains corrupt time data
         DataError           /// Data can be corrupted or incomplete
     };
 
@@ -72,9 +73,16 @@ public:
      */
     inline void validDataRead()
     {
-        if (m_parsingState == TruncationError)
+        // Rows with time errors will stored too, so they have to handeled like
+        // the OK ones.
+        if (!((m_lastParsingState == OK)||(m_lastParsingState == TimeError)))
         {
-            m_parsingState = DataError;
+            // insert entry with state OK to mark data is ok.
+            m_errors.push_back(errorEntry());
+            m_lastParsingState = OK;
+            // When here we know we had an error and now data is OK again
+            // Set to data error as we cannot predict whats wrong
+            m_globalState = DataError;
         }
     }
 
@@ -99,26 +107,58 @@ public:
     void corruptFMTRead(const int index, const QString &errorMessage);
 
     /**
+     * @brief corruptTimeRead
+     *        Shall be called when ever a time error occurs while parsing
+     *        any data.
+     *
+     * @param index - The log index the error occured
+     * @param errorMessage - Error message describing the error reason
+     */
+    void corruptTimeRead(const int index, const QString &errorMessage);
+
+    /**
      * @brief getParsingState
      *        Delivers the final state of the log parsing. The value
      *        is only valid if parsing is finished.
-     *
+     *FmtError
      * @return - The parsing state - @see parsingState
      */
-    parsingState getParsingState();
+    parsingState getParsingState() const;
 
     /**
-     * @brief getErrorText
+     * @brief getErrorOverview
+     *        Creates an overview of errors occured. Type and number are listed
+     * @return
+     */
+    QString getErrorOverview() const;
+
+    /**
+     * @brief getDetailedErrorText
      *        Creates a text containing all errormessages inserted during
      *        parsing. One line for each error.
      *
      * @return - multi line string with all error messages.
      */
-    QString getErrorText();
+    QString getDetailedErrorText() const;
 
 private:
-    typedef QPair<int, QString> errorEntry; /// Type for storing error index and text
-    parsingState m_parsingState;            /// The internal parsing state
+    /**
+     * @brief The errorEntry struct
+     *        holds all data describing the error
+     */
+    struct errorEntry
+    {
+        parsingState m_state;
+        int m_index;
+        QString m_errortext;
+
+        errorEntry() : m_state(OK), m_index(0){}
+        errorEntry(const parsingState state, const int index, const QString &text) :
+                   m_state(state), m_index(index), m_errortext(text) {}
+    };
+
+    parsingState m_lastParsingState;        /// The internal parsing state since last call
+    parsingState m_globalState;             /// Reflecting the overall parsing state
     QVector<errorEntry> m_errors;           /// For storing all error entries
 };
 
@@ -142,7 +182,18 @@ signals:
     void lineRead(QString line);
 
 private:
-    typedef QPair<QString, double> tsNameToScalingType; /// Pair holding timestamp name an its scaling
+    /**
+     * @brief The timeStampType struct
+     *        Used to hold the name and the scaling of a time stamp.
+     */
+    struct timeStampType
+    {
+        QString m_name;     /// Name of the time stamp
+        double  m_divisor;  /// Divisor to scale time stamp to seconds
+
+        timeStampType() : m_divisor(0.0) {}
+        timeStampType(const QString &name, const double divisor) : m_name(name), m_divisor(divisor) {}
+    };
 
     /**
      * @brief The typeDescriptor struct
@@ -171,21 +222,48 @@ private:
      * @brief addTimeToDescriptor - helper function for parsing. Extends a type descriptor to hold
      *        a timestamp
      */
-    void addTimeToDescriptor(const tsNameToScalingType &timeStampSearchKey, typeDescriptor &desc);
+    void addTimeToDescriptor(typeDescriptor &desc);
 
     /**
      * @brief adaptGPSDescriptor - helper function for parsing. Manipulates a GPS type descriptor
      *        by renaming old time stamp name and adding a new one. Needed cause the GPS time does not
      *        match other times
      */
-    void adaptGPSDescriptor(QMap<unsigned int, typeDescriptor> &typeToDescriptorMap, typeDescriptor &desc, const tsNameToScalingType &timeStampSearchKey, unsigned char msg_type);
+    void adaptGPSDescriptor(QMap<unsigned int, typeDescriptor> &typeToDescriptorMap, typeDescriptor &desc, unsigned char msg_type);
 
     /**
      * @brief adaptGPSDescriptor - helper function for parsing. Manipulates a GPS type descriptor
      *        by renaming old time stamp name and adding a new one. Needed cause the GPS time does not
      *        match other times
      */
-    bool adaptGPSDescriptor(QMap<QString, typeDescriptor> &nameToDescriptorMap, typeDescriptor &desc, const tsNameToScalingType &timeStampSearchKey);
+    bool adaptGPSDescriptor(QMap<QString, typeDescriptor> &nameToDescriptorMap, typeDescriptor &desc);
+
+    /**
+     * @brief handleMissingTimeStamps - helper function for parsing. Checks if a timestamp has to be added
+     *        and adds it if needed. If the data already contains a valid time stamp its value is stored
+     *        in lastValidTS. lastValidTS is used to set the time stamp of the data which lacks it.
+     *
+     * @param timeStampHasToBeAdded - Collection holding all message keys of the messages wothout a time stamp
+     * @param desc - typeDescriptor of the actual message
+     * @param valuepairlist - extracted data pairs of the message
+     * @param lastValidTS - last valid time stamp
+     * @param index - actual parsing index
+     */
+    void handleMissingTimeStamps(const QStringList &timeStampHasToBeAdded, const QString &name, QList<QPair<QString,QVariant> > &valuepairlist,
+                                 quint64 &lastValidTS, const int index);
+
+    /**
+     * @brief handleMissingTimeStamps - helper for parsing.
+     * @see handleMissingTimeStamps
+     */
+    void handleMissingTimeStamps(const QList<unsigned int> &timeStampHasToBeAdded, const unsigned char type, QList<QPair<QString,QVariant> > &valuepairlist,
+                                 quint64 &lastValidTS, const int index);
+
+    /**
+     * @brief getTimeStamp - extracts a valid time stamp from valuepair list and sets lastValidTS.
+     *        checks if the time stamps are increasing. Used by handleMissingTimeStamps methods
+     */
+    void getTimeStamp(QList<QPair<QString,QVariant> > &valuepairlist, const int index, quint64 &lastValidTS);
 private:
 
     QString m_fileName;
@@ -194,7 +272,10 @@ private:
     AP2DataPlot2DModel *m_dataModel;
 
     AP2DataPlotStatus m_plotState;
-    QList<tsNameToScalingType> m_possibleTimestamps;
+    QList<timeStampType> m_possibleTimestamps;
+    timeStampType m_timeStamp;
+
+
 
 };
 
