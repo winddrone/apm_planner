@@ -502,6 +502,7 @@ enum Mode
     QHOVER        = 18,
     QLOITER       = 19,
     EIGHT_PLANE   = 21,
+    LOITER_3D     = 22,
     LAST_MODE           // This must always be the last entry
 };
 

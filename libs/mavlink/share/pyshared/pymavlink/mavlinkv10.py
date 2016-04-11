@@ -106,6 +106,7 @@ MAV_CMD_NAV_RETURN_TO_LAUNCH = 20 # Return to launch location
 MAV_CMD_NAV_LAND = 21 # Land at location
 MAV_CMD_NAV_TAKEOFF = 22 # Takeoff from ground / hand
 MAV_CMD_NAV_EIGHT_PLANE=26 # Flying an eight in a plane
+MAV_CMD_NAV_LOITER_3D = 27 # Loiter in a certain plane
 MAV_CMD_NAV_ROI = 80 # Sets the region of interest (ROI) for a sensor set or the
                         # vehicle itself. This can then be used by the
                         # vehicles control             system to
