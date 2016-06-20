@@ -60,6 +60,7 @@ QGCCommandButton::QGCCommandButton(QWidget *parent) :
     ui->editCommandComboBox->addItem("MAV_CMD_NAV_EIGHT_PLANE", MAV_CMD_NAV_EIGHT_PLANE);
     ui->editCommandComboBox->addItem("MAV_CMD_NAV_EIGHT_PLANE", MAV_CMD_NAV_LOITER_3D);
     ui->editCommandComboBox->addItem("MAV_CMD_NAV_EIGHT_PLANE", MAV_CMD_NAV_EIGHT_SPHERE);
+    ui->editCommandComboBox->addItem("MAV_CMD_NAV_WINDDRONE", MAV_CMD_NAV_WINDDRONE);
     ui->editCommandComboBox->addItem("MAV_CMD_NAV_LOITER_TURNS", MAV_CMD_NAV_LOITER_TURNS);
     ui->editCommandComboBox->addItem("MAV_CMD_NAV_LOITER_TIME", MAV_CMD_NAV_LOITER_TIME);
     ui->editCommandComboBox->addItem("MAV_CMD_NAV_LOITER_TO_ALT", MAV_CMD_NAV_LOITER_TO_ALT);
