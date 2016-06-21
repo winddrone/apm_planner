@@ -1264,6 +1264,18 @@ QString Plane::MessageFormatter::format(const ModeMessage &message)
     case Plane::QLOITER:
         outputStream << "QLoiter";
         break;
+    case Plane::EIGHT_PLANE:
+        outputStream << "Eight plane";
+        break;
+    case Plane::LOITER_3D:
+        outputStream << "Loiter 3D";
+        break;
+    case Plane::EIGHT_SPHERE:
+        outputStream << "Eight sphere";
+        break;
+    case Plane::WINDDRONE:
+        outputStream << "Winddrone";
+        break;
     default:
         outputStream << "Unknown Mode:" << message.getMode();
         break;

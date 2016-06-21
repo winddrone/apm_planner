@@ -512,6 +512,82 @@ void UASActionsWidget::sendApmPlaneCommand(MAV_CMD command)
                               param4, param5, param6, param7, component);
     } break;
 
+    case MAV_CMD_NAV_EIGHT_PLANE: {
+        // Loiter around this MISSION an unlimited amount of time
+        Q_ASSERT(command == MAV_CMD_NAV_EIGHT_PLANE);
+        QLOG_INFO() << "MAV_CMD_NAV_EIGHT_PLANE";
+
+        int confirm = 1;    // [TODO] Verify This is what ArduPlane Does.
+        float param1 = 0.0; // Empty
+        float param2 = 0.0; // Empty
+        float param3 = 0.0; // [NOT USED] Radius around MISSION, in meters. If positive loiter clockwise, else counter-clockwise
+        float param4 = 0.0; // Desired yaw angle.|
+        float param5 = 0.0; // Latitude
+        float param6 = 0.0; // Longitude
+        float param7 = 0.0; // Altitude
+        int component = MAV_COMP_ID_PRIMARY;
+        m_uas->executeCommand(command,
+                confirm, param1, param2, param3,
+                param4, param5, param6, param7, component);
+    } break;
+
+    case MAV_CMD_NAV_LOITER_3D: {
+        // Loiter around this MISSION an unlimited amount of time
+        Q_ASSERT(command == MAV_CMD_NAV_LOITER_3D);
+        QLOG_INFO() << "MAV_CMD_NAV_LOITER_3D";
+
+        int confirm = 1;    // [TODO] Verify This is what ArduPlane Does.
+        float param1 = 0.0; // Empty
+        float param2 = 0.0; // Empty
+        float param3 = 0.0; // [NOT USED] Radius around MISSION, in meters. If positive loiter clockwise, else counter-clockwise
+        float param4 = 0.0; // Desired yaw angle.|
+        float param5 = 0.0; // Latitude
+        float param6 = 0.0; // Longitude
+        float param7 = 0.0; // Altitude
+        int component = MAV_COMP_ID_PRIMARY;
+        m_uas->executeCommand(command,
+                confirm, param1, param2, param3,
+                param4, param5, param6, param7, component);
+    } break;
+
+    case MAV_CMD_NAV_EIGHT_SPHERE: {
+        // Loiter around this MISSION an unlimited amount of time
+        Q_ASSERT(command == MAV_CMD_NAV_EIGHT_SPHERE);
+        QLOG_INFO() << "MAV_CMD_NAV_EIGHT_SPHERE";
+
+        int confirm = 1;    // [TODO] Verify This is what ArduPlane Does.
+        float param1 = 0.0; // Empty
+        float param2 = 0.0; // Empty
+        float param3 = 0.0; // [NOT USED] Radius around MISSION, in meters. If positive loiter clockwise, else counter-clockwise
+        float param4 = 0.0; // Desired yaw angle.|
+        float param5 = 0.0; // Latitude
+        float param6 = 0.0; // Longitude
+        float param7 = 0.0; // Altitude
+        int component = MAV_COMP_ID_PRIMARY;
+        m_uas->executeCommand(command,
+                confirm, param1, param2, param3,
+                param4, param5, param6, param7, component);
+    } break;
+
+    case MAV_CMD_NAV_WINDDRONE: {
+        // Loiter around this MISSION an unlimited amount of time
+        Q_ASSERT(command == MAV_CMD_NAV_WINDDRONE);
+        QLOG_INFO() << "MAV_CMD_NAV_WINDDRONE";
+
+        int confirm = 1;    // [TODO] Verify This is what ArduPlane Does.
+        float param1 = 0.0; // Empty
+        float param2 = 0.0; // Empty
+        float param3 = 0.0; // [NOT USED] Radius around MISSION, in meters. If positive loiter clockwise, else counter-clockwise
+        float param4 = 0.0; // Desired yaw angle.|
+        float param5 = 0.0; // Latitude
+        float param6 = 0.0; // Longitude
+        float param7 = 0.0; // Altitude
+        int component = MAV_COMP_ID_PRIMARY;
+        m_uas->executeCommand(command,
+                confirm, param1, param2, param3,
+                param4, param5, param6, param7, component);
+    } break;
+
     case MAV_CMD_NAV_RETURN_TO_LAUNCH: {
         /* Return to launch location |Empty| Empty| Empty| Empty| Empty| Empty| Empty|  */
         Q_ASSERT(command == MAV_CMD_NAV_RETURN_TO_LAUNCH);
